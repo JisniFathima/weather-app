@@ -1,6 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
+
+type ColorMode = "light" | "dark";
 
 type WeatherResult = {
   location: { name: string; country?: string; country_code?: string };
@@ -119,26 +121,76 @@ function getThemeForTemperature(temp: number): TemperatureTheme {
   };
 }
 
-const defaultTheme: TemperatureTheme = {
-  gradient: "linear-gradient(165deg, #a5b4fc 0%, #818cf8 45%, #6366f1 100%)",
+const defaultThemeLight: TemperatureTheme = {
+  gradient: "linear-gradient(165deg, #eef2ff 0%, #e0e7ff 40%, #c7d2fe 100%)",
   cardBg: "transparent",
-  accent: "#4338ca",
-  accentMuted: "rgba(67, 56, 202, 0.2)",
+  accent: "#4f46e5",
+  accentMuted: "rgba(79, 70, 229, 0.15)",
   label: "#6366f1",
   labelName: "",
   cardText: "#1e293b",
   cardTemp: "#4338ca",
-  headerText: "#312e81",
+  headerText: "#3730a3",
   headerSubtext: "#4f46e5",
 };
+
+const defaultThemeDark: TemperatureTheme = {
+  gradient: "linear-gradient(165deg, #4c1d95 0%, #5b21b6 45%, #6d28d9 100%)",
+  cardBg: "transparent",
+  accent: "#a78bfa",
+  accentMuted: "rgba(167, 139, 250, 0.2)",
+  label: "#c4b5fd",
+  labelName: "",
+  cardText: "#e9d5ff",
+  cardTemp: "#a78bfa",
+  headerText: "#e9d5ff",
+  headerSubtext: "#c4b5fd",
+};
+
+type ApiResponse = WeatherResult | { emirates: WeatherResult[] };
+
+function getStoredColorMode(): ColorMode {
+  if (typeof window === "undefined") return "light";
+  const stored = localStorage.getItem("weather-app-color-mode") as ColorMode | null;
+  if (stored === "light" || stored === "dark") return stored;
+  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
 
 export default function WeatherContent() {
   const [location, setLocation] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [weather, setWeather] = useState<WeatherResult | null>(null);
+  const [emirates, setEmirates] = useState<WeatherResult[] | null>(null);
+  const [colorMode, setColorMode] = useState<ColorMode>("light");
 
-  const theme = weather ? getThemeForTemperature(weather.temperature) : defaultTheme;
+  // Sync with script in layout: read saved theme as soon as we're on client
+  useEffect(() => {
+    setColorMode(getStoredColorMode());
+  }, []);
+
+  // Persist choice and keep html class in sync for next load
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    localStorage.setItem("weather-app-color-mode", colorMode);
+    if (colorMode === "dark") {
+      document.documentElement.classList.add("dark");
+    } else {
+      document.documentElement.classList.remove("dark");
+    }
+  }, [colorMode]);
+
+  const defaultTheme = colorMode === "dark" ? defaultThemeDark : defaultThemeLight;
+  const theme = weather
+    ? getThemeForTemperature(weather.temperature)
+    : emirates?.length
+      ? getThemeForTemperature(
+          emirates.reduce((a, b) => a + b.temperature, 0) / emirates.length
+        )
+      : defaultTheme;
+  const isDefaultState = !weather && !emirates?.length;
+  // When dark mode and no result, always use dark gradient so toggle works reliably
+  const backgroundGradient = isDefaultState && colorMode === "dark" ? defaultThemeDark.gradient : theme.gradient;
 
   async function handleSearch(e: React.FormEvent) {
     e.preventDefault();
@@ -146,15 +198,20 @@ export default function WeatherContent() {
     if (!query) return;
     setError(null);
     setWeather(null);
+    setEmirates(null);
     setLoading(true);
     try {
       const res = await fetch(`/api/weather?location=${encodeURIComponent(query)}`);
-      const data = await res.json();
+      const data: ApiResponse = await res.json();
       if (!res.ok) {
-        setError(data.error ?? "Something went wrong");
+        setError((data as { error?: string }).error ?? "Something went wrong");
         return;
       }
-      setWeather(data);
+      if ("emirates" in data && Array.isArray(data.emirates)) {
+        setEmirates(data.emirates);
+      } else {
+        setWeather(data as WeatherResult);
+      }
     } catch {
       setError("Network error. Please try again.");
     } finally {
@@ -162,11 +219,41 @@ export default function WeatherContent() {
     }
   }
 
+  const toggleColorMode = () => {
+    setColorMode((m) => (m === "light" ? "dark" : "light"));
+  };
+
   return (
     <div
-      className="min-h-screen transition-[background] duration-700 ease-out"
-      style={{ background: theme.gradient }}
+      className="min-h-screen transition-[background] duration-700 ease-out flex flex-col"
+      style={{ background: backgroundGradient }}
+      data-color-mode={colorMode}
     >
+      {/* Light/Dark mode toggle - top right */}
+      <div className="relative z-10 flex justify-end px-4 pt-4 sm:px-6 sm:pt-6">
+        <button
+          type="button"
+          onClick={toggleColorMode}
+          className="rounded-xl p-2.5 border shadow-sm transition-all hover:shadow focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-transparent"
+          style={{
+            color: theme.headerText,
+            borderColor: colorMode === "dark" ? "rgba(255,255,255,0.2)" : "rgba(0,0,0,0.1)",
+            backgroundColor: colorMode === "dark" ? "rgba(30, 27, 75, 0.8)" : "rgba(255,255,255,0.9)",
+          }}
+          aria-label={colorMode === "light" ? "Switch to dark mode" : "Switch to light mode"}
+        >
+          {colorMode === "light" ? (
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+            </svg>
+          ) : (
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+            </svg>
+          )}
+        </button>
+      </div>
+
       {/* Cloud design - soft cloud shapes in the background */}
       <div className="fixed inset-0 overflow-hidden pointer-events-none">
         {/* Cloud 1 - top right */}
@@ -203,54 +290,146 @@ export default function WeatherContent() {
         />
       </div>
 
-      <main className="relative max-w-md mx-auto px-5 py-14 sm:py-20">
-        <div className="text-center mb-10">
+      <main
+        className={`relative mx-auto px-4 sm:px-6 py-8 sm:py-10 ${emirates?.length ? "max-w-6xl" : "max-w-md"}`}
+      >
+        <div className="text-center mb-6 sm:mb-8">
           <h1
-            className="text-2xl sm:text-3xl font-bold tracking-tight"
+            className="text-xl sm:text-2xl md:text-3xl font-bold tracking-tight"
             style={{ color: theme.headerText }}
           >
-            Weather by place
+            {emirates?.length ? "UAE – City wise weather update" : "Weather by place"}
           </h1>
           <p
-            className="mt-1.5 text-sm sm:text-base"
+            className="mt-1 sm:mt-1.5 text-sm sm:text-base"
             style={{ color: theme.headerSubtext }}
           >
-            Enter a country or city to see the temperature
+            {emirates?.length
+              ? "Current weather across the 7 emirates"
+              : "Enter a country or city to see the temperature"}
           </p>
         </div>
 
         <form
           onSubmit={handleSearch}
-          className="flex flex-col sm:flex-row gap-3 mb-8"
+          className="flex flex-col sm:flex-row gap-3 mb-6 sm:mb-8 max-w-2xl mx-auto"
         >
           <input
             type="text"
             value={location}
             onChange={(e) => setLocation(e.target.value)}
-            placeholder="e.g. France, Tokyo, London"
-            className="flex-1 rounded-2xl border border-slate-200 bg-white/95 backdrop-blur-md px-4 py-3.5 text-slate-800 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-slate-300 focus:border-slate-400 transition-all shadow-sm"
+            placeholder="e.g. UAE, France, Tokyo, London"
+            className={`flex-1 rounded-2xl border backdrop-blur-md px-4 py-3.5 transition-all shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-transparent placeholder-slate-500 ${
+              colorMode === "dark" && isDefaultState ? "placeholder-violet-300" : ""
+            }`}
+            style={
+              colorMode === "dark" && isDefaultState
+                ? {
+                    borderColor: "rgba(255,255,255,0.2)",
+                    backgroundColor: "rgba(30, 27, 75, 0.9)",
+                    color: "#e9d5ff",
+                  }
+                : {
+                    borderColor: "var(--tw-border-color, #e2e8f0)",
+                    backgroundColor: "rgba(255,255,255,0.95)",
+                    color: "#1e293b",
+                  }
+            }
             disabled={loading}
           />
           <button
             type="submit"
             disabled={loading || !location.trim()}
-            className="rounded-2xl px-6 py-3.5 font-medium text-slate-800 bg-white/95 hover:bg-white border border-slate-200 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed transition-all focus:outline-none focus:ring-2 focus:ring-slate-300 focus:ring-offset-2 focus:ring-offset-transparent"
+            className="rounded-2xl px-6 py-3.5 font-medium border shadow-sm disabled:opacity-50 disabled:cursor-not-allowed transition-all focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-transparent"
+            style={
+              colorMode === "dark" && isDefaultState
+                ? {
+                    borderColor: "rgba(255,255,255,0.2)",
+                    backgroundColor: "rgba(30, 27, 75, 0.9)",
+                    color: "#e9d5ff",
+                }
+                : {
+                    borderColor: "#e2e8f0",
+                    backgroundColor: "rgba(255,255,255,0.95)",
+                    color: "#1e293b",
+                }
+            }
           >
             {loading ? "Searching…" : "Search"}
           </button>
         </form>
 
         {error && (
-          <div
-            className="rounded-2xl border border-red-400/50 bg-red-950/40 backdrop-blur-md text-red-200 px-4 py-3 mb-6"
-          >
+          <div className="rounded-2xl border border-red-400/50 bg-red-950/40 backdrop-blur-md text-red-200 px-4 py-3 mb-6 max-w-2xl mx-auto">
             {error}
           </div>
         )}
 
-        {weather && (
+        {isDefaultState && !error && (
+          <p
+            className="text-center text-sm max-w-md mx-auto mb-6 opacity-80"
+            style={{ color: theme.headerSubtext }}
+          >
+            Try &quot;UAE&quot; for all 7 emirates, or any city like Paris, Tokyo, London.
+          </p>
+        )}
+
+        {emirates && emirates.length > 0 && (
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4 pb-6">
+            {emirates.map((item) => {
+              const cardTheme = getThemeForTemperature(item.temperature);
+              return (
+                <div
+                  key={item.location.name}
+                  className="rounded-2xl border border-black/10 backdrop-blur-xl overflow-hidden shadow-lg transition-all duration-300 hover:shadow-xl"
+                  style={{
+                    backgroundColor: cardTheme.cardBg,
+                    boxShadow: `0 10px 30px -10px rgba(0,0,0,0.1), 0 0 0 1px ${cardTheme.accentMuted}`,
+                  }}
+                >
+                  <div className="px-4 pt-4 pb-2">
+                    <h3
+                      className="text-base sm:text-lg font-bold truncate"
+                      style={{ color: cardTheme.cardText }}
+                    >
+                      {item.location.name}
+                    </h3>
+                  </div>
+                  <div className="px-4 pb-4 text-center">
+                    <p
+                      className="text-3xl sm:text-4xl font-bold tabular-nums"
+                      style={{ color: cardTheme.cardTemp }}
+                    >
+                      {Math.round(item.temperature)}
+                      <span className="text-lg sm:text-xl font-normal opacity-90">
+                        {item.unit}
+                      </span>
+                    </p>
+                    <div
+                      className="mt-3 flex flex-wrap justify-center gap-x-4 gap-y-1 text-xs sm:text-sm border-t border-black/10 pt-3"
+                      style={{ color: cardTheme.cardText }}
+                    >
+                      {item.humidity != null && (
+                        <span>
+                          Humidity <span className="font-semibold">{item.humidity}%</span>
+                        </span>
+                      )}
+                      {item.wind_speed_kmh != null && (
+                        <span>
+                          Wind <span className="font-semibold">{item.wind_speed_kmh} km/h</span>
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {weather && !emirates?.length && (
           <div
-            className="rounded-3xl border border-black/10 backdrop-blur-xl overflow-hidden transition-all duration-500 shadow-2xl"
+            className="rounded-3xl border border-black/10 backdrop-blur-xl overflow-hidden transition-all duration-500 shadow-2xl max-w-md mx-auto"
             style={{
               backgroundColor: theme.cardBg,
               boxShadow: `0 25px 50px -12px rgba(0,0,0,0.12), 0 0 0 1px ${theme.accentMuted}`,
@@ -305,6 +484,40 @@ export default function WeatherContent() {
           </div>
         )}
       </main>
+
+      {/* Weather-based images strip at bottom - fills empty space, adapts to light/dark */}
+      <footer className="relative mt-auto pt-8 pb-6 px-4">
+        <div
+          className="max-w-4xl mx-auto flex flex-wrap justify-center items-end gap-8 sm:gap-12 opacity-90"
+          style={{ color: isDefaultState ? theme.headerText : theme.cardTemp }}
+        >
+          <div className="flex flex-col items-center gap-1" title="Temperature">
+            <svg className="w-10 h-10 sm:w-12 sm:h-12 opacity-80" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z" />
+            </svg>
+            <span className="text-xs font-medium opacity-70">Temp</span>
+          </div>
+          <div className="flex flex-col items-center gap-1" title="Sun">
+            <svg className="w-10 h-10 sm:w-12 sm:h-12 opacity-80" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="5" />
+              <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" />
+            </svg>
+            <span className="text-xs font-medium opacity-70">Sun</span>
+          </div>
+          <div className="flex flex-col items-center gap-1" title="Cloud">
+            <svg className="w-10 h-10 sm:w-12 sm:h-12 opacity-80" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z" />
+            </svg>
+            <span className="text-xs font-medium opacity-70">Cloud</span>
+          </div>
+          <div className="flex flex-col items-center gap-1" title="Wind">
+            <svg className="w-10 h-10 sm:w-12 sm:h-12 opacity-80" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M9.59 4.59A2 2 0 1 1 11 8H2m10.59 11.41A2 2 0 1 0 14 16H2m15.73-8.27A2 2 0 1 1 19 4H2.5m0 15.5H2" />
+            </svg>
+            <span className="text-xs font-medium opacity-70">Wind</span>
+          </div>
+        </div>
+      </footer>
     </div>
   );
 }
